@@ -1,0 +1,110 @@
+name: Deploy Frontend to AWS
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/deploy-frontend.yml'
+
+env:
+  AWS_REGION: us-east-1
+  S3_BUCKET: nonprofit-learning-frontend
+  CLOUDFRONT_DISTRIBUTION_ID: ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}
+
+jobs:
+  deploy:
+    name: Deploy to AWS S3 + CloudFront
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./frontend
+        run: npm ci
+
+      - name: Build Next.js app
+        working-directory: ./frontend
+        env:
+          NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY }}
+          NEXT_PUBLIC_CLERK_FRONTEND_API: ${{ secrets.CLERK_FRONTEND_API }}
+        run: npm run build
+
+      - name: Configure AWS credentials for S3
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy to S3
+        working-directory: ./frontend
+        run: |
+          # Create S3 bucket if it doesn't exist
+          aws s3 mb s3://${{ env.S3_BUCKET }} --region ${{ env.AWS_REGION }} || true
+          
+          # For Next.js standalone output, we need to copy the entire standalone directory
+          # Note: For true static hosting, consider using AWS Amplify instead
+          # This approach requires a server (e.g., Lambda@Edge or EC2)
+          
+          # Copy static assets
+          if [ -d ".next/static" ]; then
+            aws s3 sync .next/static s3://${{ env.S3_BUCKET }}/_next/static \
+              --delete \
+              --cache-control "public, max-age=31536000, immutable"
+          fi
+          
+          # Copy public assets
+          if [ -d "public" ]; then
+            aws s3 sync public s3://${{ env.S3_BUCKET }}/public \
+              --delete \
+              --cache-control "public, max-age=3600"
+          fi
+          
+          # Copy standalone server files (for server-side rendering)
+          if [ -d ".next/standalone" ]; then
+            aws s3 sync .next/standalone s3://${{ env.S3_BUCKET }}/standalone \
+              --delete \
+              --exclude "*.map"
+          fi
+          
+          # Copy other necessary files
+          if [ -f ".next/BUILD_ID" ]; then
+            aws s3 cp .next/BUILD_ID s3://${{ env.S3_BUCKET }}/.next/BUILD_ID
+          fi
+          
+          echo "⚠️  Note: Next.js standalone output requires a server runtime."
+          echo "Consider using AWS Amplify for better Next.js support."
+
+      - name: Invalidate CloudFront cache
+        if: env.CLOUDFRONT_DISTRIBUTION_ID != ''
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ env.CLOUDFRONT_DISTRIBUTION_ID }} \
+            --paths "/*"
+
+      - name: Deployment status
+        run: |
+          echo "✅ Frontend deployed to AWS S3"
+          echo "Bucket: ${{ env.S3_BUCKET }}"
+          echo "Region: ${{ env.AWS_REGION }}"

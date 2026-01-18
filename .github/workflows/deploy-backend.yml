@@ -1,0 +1,129 @@
+name: Deploy Backend to AWS
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/deploy-backend.yml'
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: nonprofit-learning-backend
+  APP_RUNNER_SERVICE: nonprofit-learning-backend
+
+jobs:
+  deploy:
+    name: Deploy to AWS App Runner
+    runs-on: ubuntu-latest
+    
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push image to Amazon ECR
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        working-directory: ./backend
+        run: |
+          # Build Docker image
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          
+          # Push to ECR
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Create or update App Runner service
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          # Check if service exists
+          if aws apprunner list-services --region ${{ env.AWS_REGION }} --query "ServiceSummaryList[?ServiceName=='${{ env.APP_RUNNER_SERVICE }}']" --output text | grep -q "${{ env.APP_RUNNER_SERVICE }}"; then
+            echo "Service exists, updating..."
+            aws apprunner update-service \
+              --service-arn $(aws apprunner list-services --region ${{ env.AWS_REGION }} --query "ServiceSummaryList[?ServiceName=='${{ env.APP_RUNNER_SERVICE }}'].ServiceArn" --output text) \
+              --source-configuration '{
+                "ImageRepository": {
+                  "ImageIdentifier": "${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:latest",
+                  "ImageRepositoryType": "ECR",
+                  "ImageConfiguration": {
+                    "Port": "8000",
+                    "RuntimeEnvironmentVariables": {
+                      "DATABASE_URL": "${{ secrets.DATABASE_URL }}",
+                      "CLERK_SECRET_KEY": "${{ secrets.CLERK_SECRET_KEY }}",
+                      "CLERK_PUBLISHABLE_KEY": "${{ secrets.CLERK_PUBLISHABLE_KEY }}",
+                      "CLERK_FRONTEND_API": "${{ secrets.CLERK_FRONTEND_API }}",
+                      "ENVIRONMENT": "production",
+                      "CORS_ORIGINS": "${{ secrets.CORS_ORIGINS }}"
+                    }
+                  }
+                },
+                "AutoDeploymentsEnabled": true
+              }' \
+              --region ${{ env.AWS_REGION }}
+          else
+            echo "Service does not exist, creating..."
+            aws apprunner create-service \
+              --service-name ${{ env.APP_RUNNER_SERVICE }} \
+              --source-configuration '{
+                "ImageRepository": {
+                  "ImageIdentifier": "${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:latest",
+                  "ImageRepositoryType": "ECR",
+                  "ImageConfiguration": {
+                    "Port": "8000",
+                    "RuntimeEnvironmentVariables": {
+                      "DATABASE_URL": "${{ secrets.DATABASE_URL }}",
+                      "CLERK_SECRET_KEY": "${{ secrets.CLERK_SECRET_KEY }}",
+                      "CLERK_PUBLISHABLE_KEY": "${{ secrets.CLERK_PUBLISHABLE_KEY }}",
+                      "CLERK_FRONTEND_API": "${{ secrets.CLERK_FRONTEND_API }}",
+                      "ENVIRONMENT": "production",
+                      "CORS_ORIGINS": "${{ secrets.CORS_ORIGINS }}"
+                    }
+                  }
+                },
+                "AutoDeploymentsEnabled": true
+              }' \
+              --instance-configuration '{
+                "Cpu": "1 vCPU",
+                "Memory": "2 GB"
+              }' \
+              --region ${{ env.AWS_REGION }}
+          fi
+
+      - name: Run database migrations
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          # Install dependencies
+          cd backend
+          pip install -r requirements.txt
+          
+          # Run migrations
+          alembic upgrade head
+
+      - name: Deployment status
+        run: |
+          echo "✅ Backend deployed to AWS App Runner"
+          echo "Service: ${{ env.APP_RUNNER_SERVICE }}"
+          echo "Region: ${{ env.AWS_REGION }}"

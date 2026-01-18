@@ -1,0 +1,34 @@
+{
+  "ServiceName": "nonprofit-learning-backend",
+  "SourceConfiguration": {
+    "ImageRepository": {
+      "ImageIdentifier": "YOUR_ECR_REPO_URI:latest",
+      "ImageRepositoryType": "ECR",
+      "ImageConfiguration": {
+        "Port": "8000",
+        "RuntimeEnvironmentVariables": {
+          "DATABASE_URL": "postgresql://user:password@rds-endpoint:5432/nonprofit_learning",
+          "CLERK_SECRET_KEY": "sk_live_...",
+          "CLERK_PUBLISHABLE_KEY": "pk_live_...",
+          "CLERK_FRONTEND_API": "https://your-app.clerk.accounts.dev",
+          "ENVIRONMENT": "production",
+          "CORS_ORIGINS": "https://your-frontend-domain.com"
+        }
+      }
+    },
+    "AutoDeploymentsEnabled": true
+  },
+  "InstanceConfiguration": {
+    "Cpu": "1 vCPU",
+    "Memory": "2 GB",
+    "InstanceRoleArn": "arn:aws:iam::YOUR_ACCOUNT:role/AppRunnerInstanceRole"
+  },
+  "HealthCheckConfiguration": {
+    "Protocol": "HTTP",
+    "Path": "/health",
+    "Interval": 10,
+    "Timeout": 5,
+    "HealthyThreshold": 1,
+    "UnhealthyThreshold": 5
+  }
+}
