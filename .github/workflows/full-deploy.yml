@@ -52,23 +52,42 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
       
-      - name: Create ECR repository if it doesn't exist
-        continue-on-error: true
+      - name: Verify AWS credentials
         run: |
-          if ! aws ecr describe-repositories --repository-names nonprofit-learning-backend --region ${{ env.AWS_REGION }} 2>/dev/null; then
-            echo "Creating ECR repository..."
+          echo "Verifying AWS credentials..."
+          aws sts get-caller-identity
+          echo "✅ AWS credentials verified"
+      
+      - name: Create ECR repository if it doesn't exist
+        run: |
+          echo "Checking if ECR repository exists..."
+          if aws ecr describe-repositories --repository-names nonprofit-learning-backend --region ${{ env.AWS_REGION }} 2>/dev/null; then
+            echo "✅ ECR repository 'nonprofit-learning-backend' already exists"
+            aws ecr describe-repositories --repository-names nonprofit-learning-backend --region ${{ env.AWS_REGION }}
+          else
+            echo "Creating ECR repository 'nonprofit-learning-backend'..."
             aws ecr create-repository \
               --repository-name nonprofit-learning-backend \
               --region ${{ env.AWS_REGION }} \
               --image-scanning-configuration scanOnPush=true \
-              --image-tag-mutability MUTABLE || echo "ECR repository may already exist or creation failed"
-          else
-            echo "ECR repository already exists"
+              --image-tag-mutability MUTABLE
+            echo "✅ ECR repository created successfully"
           fi
+      
+      - name: Verify ECR repository access
+        run: |
+          echo "Verifying ECR repository access..."
+          aws ecr describe-repositories --repository-names nonprofit-learning-backend --region ${{ env.AWS_REGION }}
+          echo "✅ ECR repository is accessible"
       
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
+      
+      - name: Display ECR registry info
+        run: |
+          echo "ECR Registry: ${{ steps.login-ecr.outputs.registry }}"
+          echo "Repository URI: ${{ steps.login-ecr.outputs.registry }}/nonprofit-learning-backend"
       
       - name: Verify Dockerfile and entrypoint exist
         working-directory: ./backend
@@ -97,23 +116,51 @@ jobs:
         working-directory: ./backend
         run: |
           set -e
+          FULL_IMAGE_TAG="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          LATEST_IMAGE_TAG="$ECR_REGISTRY/$ECR_REPOSITORY:latest"
+          
+          echo "=========================================="
           echo "Building Docker image..."
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG . || {
+          echo "Image: $FULL_IMAGE_TAG"
+          echo "=========================================="
+          
+          docker build -t $FULL_IMAGE_TAG . || {
             echo "❌ Docker build failed"
+            echo "Checking Dockerfile..."
+            cat Dockerfile || echo "Dockerfile not found"
             exit 1
           }
-          echo "Tagging image as latest..."
-          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          
+          echo "✅ Docker image built successfully"
+          echo "Tagging as latest: $LATEST_IMAGE_TAG"
+          docker tag $FULL_IMAGE_TAG $LATEST_IMAGE_TAG
+          
+          echo "=========================================="
           echo "Pushing images to ECR..."
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG || {
-            echo "❌ Failed to push image tag"
+          echo "Pushing: $FULL_IMAGE_TAG"
+          echo "=========================================="
+          docker push $FULL_IMAGE_TAG || {
+            echo "❌ Failed to push image tag: $FULL_IMAGE_TAG"
+            echo "Checking ECR repository..."
+            aws ecr describe-repositories --repository-names $ECR_REPOSITORY --region ${{ env.AWS_REGION }} || echo "Repository check failed"
             exit 1
           }
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest || {
-            echo "❌ Failed to push latest tag"
+          
+          echo "Pushing: $LATEST_IMAGE_TAG"
+          docker push $LATEST_IMAGE_TAG || {
+            echo "❌ Failed to push latest tag: $LATEST_IMAGE_TAG"
             exit 1
           }
-          echo "✅ Images pushed successfully"
+          
+          echo "=========================================="
+          echo "✅ Images pushed successfully!"
+          echo "Image URI: $FULL_IMAGE_TAG"
+          echo "Latest URI: $LATEST_IMAGE_TAG"
+          echo "=========================================="
+          
+          # Verify images in ECR
+          echo "Verifying images in ECR..."
+          aws ecr list-images --repository-name $ECR_REPOSITORY --region ${{ env.AWS_REGION }} || echo "Image listing failed (may be normal)"
       
       - name: Deploy to App Runner
         continue-on-error: true
@@ -317,9 +364,18 @@ jobs:
         run: |
           if [ -z "$DATABASE_URL" ]; then
             echo "⚠️  DATABASE_URL not set, skipping migrations"
+            echo "ℹ️  Note: Database needs to be created first (RDS PostgreSQL)"
+            echo "ℹ️  You can create it using Terraform or AWS Console"
+            echo "ℹ️  Then add DATABASE_URL to GitHub Secrets"
             exit 0
           fi
-          alembic upgrade head || echo "Migrations failed but continuing..."
+          echo "Running database migrations..."
+          alembic upgrade head || {
+            echo "⚠️  Migrations failed but continuing..."
+            echo "This is expected if the database doesn't exist yet"
+            exit 0
+          }
+          echo "✅ Migrations completed"
 
   notify:
     name: Deployment Complete
