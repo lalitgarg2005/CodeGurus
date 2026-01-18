@@ -148,12 +148,14 @@ jobs:
           DB_PASSWORD: ${{ github.event.inputs.db_password || secrets.DB_PASSWORD || 'ChangeMe123!' }}
         run: |
           echo "Creating RDS PostgreSQL instance (Free Tier compatible)..."
+          echo "Using PostgreSQL 14 (AWS will select latest available 14.x version)"
           
-          aws rds create-db-instance \
+          # Try with version "14" first (AWS picks latest available 14.x)
+          if aws rds create-db-instance \
             --db-instance-identifier nonprofit-learning-db \
             --db-instance-class db.t3.micro \
             --engine postgres \
-            --engine-version 14.9 \
+            --engine-version "14" \
             --master-username postgres \
             --master-user-password "$DB_PASSWORD" \
             --allocated-storage 20 \
@@ -165,10 +167,41 @@ jobs:
             --region ${{ env.AWS_REGION }} \
             --no-publicly-accessible \
             --no-multi-az \
-            --no-storage-encrypted || {
-            echo "⚠️  RDS creation failed. Check error above."
-            exit 1
-          }
+            --no-storage-encrypted 2>&1; then
+            echo "✅ RDS creation initiated with PostgreSQL 14"
+          else
+            echo "⚠️  PostgreSQL 14 failed, trying specific version 14.18..."
+            # Fallback to specific version
+            if aws rds create-db-instance \
+              --db-instance-identifier nonprofit-learning-db \
+              --db-instance-class db.t3.micro \
+              --engine postgres \
+              --engine-version "14.18" \
+              --master-username postgres \
+              --master-user-password "$DB_PASSWORD" \
+              --allocated-storage 20 \
+              --storage-type gp2 \
+              --db-name nonprofit_learning \
+              --vpc-security-group-ids ${{ steps.create-sg.outputs.SG_ID }} \
+              --db-subnet-group-name nonprofit-learning-db-subnet-group \
+              --backup-retention-period 1 \
+              --region ${{ env.AWS_REGION }} \
+              --no-publicly-accessible \
+              --no-multi-az \
+              --no-storage-encrypted 2>&1; then
+              echo "✅ RDS creation initiated with PostgreSQL 14.18"
+            else
+              echo "❌ RDS creation failed with both PostgreSQL 14 and 14.18"
+              echo ""
+              echo "Troubleshooting:"
+              echo "1. Check available PostgreSQL versions:"
+              echo "   aws rds describe-db-engine-versions --engine postgres --region us-east-1"
+              echo "2. Verify security group and subnet group exist"
+              echo "3. Check IAM permissions for RDS"
+              echo "4. Try a different PostgreSQL version (e.g., 15)"
+              exit 1
+            fi
+          fi
           
           echo "✅ RDS instance creation initiated!"
           echo "⏳ This will take 5-10 minutes to become available"
