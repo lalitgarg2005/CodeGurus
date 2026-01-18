@@ -8,11 +8,14 @@ This directory contains Terraform configuration to deploy the Nonprofit Learning
 2. **AWS CLI** installed and configured
 3. **Terraform** installed (v1.0+)
 4. **AWS Credentials** with permissions for:
-   - RDS (create database)
+   - EC2 (create security groups, describe VPCs/subnets)
+   - RDS (create database, subnet groups)
    - ECR (create repository)
-   - S3 (create bucket)
+   - S3 (create bucket, configure website)
    - CloudFront (create distribution)
    - VPC (read default VPC)
+   
+   **⚠️ Important**: If you get permission errors, see [IAM_PERMISSIONS.md](./IAM_PERMISSIONS.md) for detailed setup instructions.
 
 ## Quick Start
 
@@ -148,9 +151,17 @@ terraform destroy
 - Check if default VPC exists: `aws ec2 describe-vpcs --filters "Name=isDefault,Values=true"`
 - Or specify a custom VPC in `terraform.tfvars`
 
-### Error: "Insufficient permissions"
-- Ensure your AWS user/role has required permissions
-- Check IAM policies
+### Error: "Insufficient permissions" or "UnauthorizedOperation"
+- **Most common issue**: Missing EC2 permissions to create security groups
+- See [IAM_PERMISSIONS.md](./IAM_PERMISSIONS.md) for complete setup guide
+- Quick fix: Attach the `TerraformDeploymentPolicy` to your IAM user
+- Verify permissions: `aws ec2 describe-security-groups --max-items 1`
+
+### Error: "The security token included in the request is invalid"
+- **AWS credentials are expired or invalid**
+- See [FIX_CREDENTIALS.md](./FIX_CREDENTIALS.md) for detailed steps
+- Quick fix: Run `aws configure` to reconfigure credentials
+- Verify: `aws sts get-caller-identity`
 
 ### Error: "Bucket name already exists"
 - S3 bucket names are globally unique
@@ -184,6 +195,7 @@ terraform destroy
 ## Support
 
 For issues or questions, refer to:
+- [IAM Permissions Guide](./IAM_PERMISSIONS.md) - **Fix permission errors here!**
 - [AWS Deployment Guide](../README.md)
 - [GitHub Setup Guide](../../GITHUB_SETUP.md)
 - [Main README](../../README.md)

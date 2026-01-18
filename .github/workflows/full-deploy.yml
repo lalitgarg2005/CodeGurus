@@ -39,7 +39,7 @@ jobs:
   deploy-backend:
     name: Deploy Backend
     runs-on: ubuntu-latest
-    if: ${{ github.event.inputs.deploy_backend != 'false' || github.event_name == 'push' }}
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_backend != 'false') }}
     continue-on-error: false
     
     steps:
@@ -232,7 +232,7 @@ jobs:
   deploy-frontend:
     name: Deploy Frontend
     runs-on: ubuntu-latest
-    if: ${{ github.event.inputs.deploy_frontend != 'false' || github.event_name == 'push' }}
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_frontend != 'false') }}
     needs: deploy-backend
     continue-on-error: true
     
@@ -467,7 +467,7 @@ jobs:
   run-migrations:
     name: Run Database Migrations
     runs-on: ubuntu-latest
-    if: ${{ github.event.inputs.run_migrations != 'false' || github.event_name == 'push' }}
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_migrations != 'false') }}
     needs: deploy-backend
     continue-on-error: true
     

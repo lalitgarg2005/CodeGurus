@@ -161,7 +161,7 @@ jobs:
             --db-name nonprofit_learning \
             --vpc-security-group-ids ${{ steps.create-sg.outputs.SG_ID }} \
             --db-subnet-group-name nonprofit-learning-db-subnet-group \
-            --backup-retention-period 7 \
+            --backup-retention-period 1 \
             --region ${{ env.AWS_REGION }} \
             --no-publicly-accessible \
             --no-multi-az \
