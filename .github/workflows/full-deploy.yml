@@ -266,61 +266,191 @@ jobs:
       
       - name: Build Next.js app
         working-directory: ./frontend
-        continue-on-error: true
         env:
           NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL || 'http://localhost:8000' }}
           NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY || 'pk_test_placeholder' }}
           NEXT_PUBLIC_CLERK_FRONTEND_API: ${{ secrets.CLERK_FRONTEND_API || 'https://placeholder.clerk.accounts.dev' }}
+          NEXT_OUTPUT: export
         run: |
-          echo "Building Next.js application..."
-          npm run build || {
-            echo "⚠️  Build failed, but continuing with deployment..."
-            echo "This is expected if build artifacts are not needed for S3 static hosting"
-            exit 0
-          }
+          echo "Building Next.js application for static export..."
+          npm run build
           echo "✅ Build completed successfully"
+          echo "Build output location: out/"
+          ls -la out/ || echo "out/ directory not found"
       
-      - name: Deploy to S3
-        working-directory: ./frontend
-        continue-on-error: true
+      - name: Create S3 bucket if it doesn't exist
         run: |
-          # Create bucket if doesn't exist
-          aws s3 mb s3://nonprofit-learning-frontend --region ${{ env.AWS_REGION }} || true
-          
-          # Enable static website hosting
+          if ! aws s3 ls s3://nonprofit-learning-frontend 2>/dev/null; then
+            echo "Creating S3 bucket..."
+            aws s3 mb s3://nonprofit-learning-frontend --region ${{ env.AWS_REGION }}
+            echo "✅ S3 bucket created"
+          else
+            echo "✅ S3 bucket already exists"
+          fi
+      
+      - name: Configure S3 bucket for static website hosting
+        run: |
+          echo "Configuring S3 bucket for static website hosting..."
           aws s3 website s3://nonprofit-learning-frontend \
             --index-document index.html \
-            --error-document error.html || true
+            --error-document index.html || echo "Website configuration may already exist"
           
-          # Deploy static files if they exist
-          if [ -d ".next/static" ]; then
-            aws s3 sync .next/static s3://nonprofit-learning-frontend/_next/static \
-              --delete \
-              --cache-control "public, max-age=31536000, immutable" || true
-          fi
+          # Set bucket policy for public read access
+          cat > /tmp/bucket-policy.json <<EOF
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Sid": "PublicReadGetObject",
+                "Effect": "Allow",
+                "Principal": "*",
+                "Action": "s3:GetObject",
+                "Resource": "arn:aws:s3:::nonprofit-learning-frontend/*"
+              }
+            ]
+          }
+          EOF
+          aws s3api put-bucket-policy \
+            --bucket nonprofit-learning-frontend \
+            --policy file:///tmp/bucket-policy.json || echo "Bucket policy may already exist"
           
-          # Deploy public files
-          if [ -d "public" ]; then
-            aws s3 sync public s3://nonprofit-learning-frontend/public \
-              --delete \
-              --cache-control "public, max-age=3600" || true
-          fi
+          # Remove public access block
+          aws s3api put-public-access-block \
+            --bucket nonprofit-learning-frontend \
+            --public-access-block-configuration \
+            "BlockPublicAcls=false,IgnorePublicAcls=false,BlockPublicPolicy=false,RestrictPublicBuckets=false" || true
           
-          # Deploy standalone if exists (for server-side rendering)
-          if [ -d ".next/standalone" ]; then
-            aws s3 sync .next/standalone s3://nonprofit-learning-frontend/standalone \
-              --delete \
-              --exclude "*.map" || true
-          fi
-          
-          # Deploy build output if exists
-          if [ -d ".next" ]; then
-            find .next -type f -name "*.html" -exec aws s3 cp {} s3://nonprofit-learning-frontend/ \; || true
-          fi
-          
-          echo "⚠️  Note: For full Next.js SSR support, consider using AWS Amplify"
+          echo "✅ S3 bucket configured"
       
-      - name: Invalidate CloudFront
+      - name: Deploy static files to S3
+        working-directory: ./frontend
+        run: |
+          if [ ! -d "out" ]; then
+            echo "❌ Build output directory 'out' not found!"
+            echo "Build may have failed. Checking build status..."
+            ls -la
+            exit 1
+          fi
+          
+          echo "Deploying static files to S3..."
+          echo "Source: out/"
+          echo "Destination: s3://nonprofit-learning-frontend/"
+          
+          # Sync all files from out/ to S3
+          aws s3 sync out/ s3://nonprofit-learning-frontend/ \
+            --delete \
+            --cache-control "public, max-age=0, must-revalidate" \
+            --exclude "*.map"
+          
+          # Set proper cache headers for static assets
+          aws s3 sync out/ s3://nonprofit-learning-frontend/ \
+            --exclude "*" \
+            --include "*.js" \
+            --include "*.css" \
+            --include "*.png" \
+            --include "*.jpg" \
+            --include "*.jpeg" \
+            --include "*.gif" \
+            --include "*.svg" \
+            --include "*.woff" \
+            --include "*.woff2" \
+            --cache-control "public, max-age=31536000, immutable" \
+            --delete || true
+          
+          echo "✅ Files deployed to S3"
+          echo "Listing S3 bucket contents..."
+          aws s3 ls s3://nonprofit-learning-frontend/ --recursive | head -20
+      
+      - name: Create or update CloudFront distribution
+        continue-on-error: true
+        run: |
+          echo "Checking for existing CloudFront distribution..."
+          
+          # Check if distribution already exists
+          DIST_ID=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?contains(Origins.Items[0].DomainName, 'nonprofit-learning-frontend.s3')].Id" \
+            --output text 2>/dev/null | head -1 || echo "")
+          
+          if [ -n "$DIST_ID" ] && [ "$DIST_ID" != "None" ]; then
+            echo "✅ CloudFront distribution already exists: $DIST_ID"
+            echo "Distribution domain: $(aws cloudfront get-distribution --id $DIST_ID --query 'Distribution.DomainName' --output text 2>/dev/null || echo 'Unknown')"
+          else
+            echo "Creating CloudFront distribution..."
+            
+            # Get S3 bucket website endpoint
+            S3_DOMAIN="nonprofit-learning-frontend.s3.${{ env.AWS_REGION }}.amazonaws.com"
+            
+            # Create CloudFront distribution
+            DIST_CONFIG=$(cat <<EOF
+          {
+            "CallerReference": "nonprofit-learning-frontend-$(date +%s)",
+            "Comment": "Nonprofit Learning Platform Frontend",
+            "DefaultRootObject": "index.html",
+            "Origins": {
+              "Quantity": 1,
+              "Items": [
+                {
+                  "Id": "S3-nonprofit-learning-frontend",
+                  "DomainName": "$S3_DOMAIN",
+                  "S3OriginConfig": {
+                    "OriginAccessIdentity": ""
+                  }
+                }
+              ]
+            },
+            "DefaultCacheBehavior": {
+              "TargetOriginId": "S3-nonprofit-learning-frontend",
+              "ViewerProtocolPolicy": "redirect-to-https",
+              "AllowedMethods": {
+                "Quantity": 2,
+                "Items": ["GET", "HEAD"],
+                "CachedMethods": {
+                  "Quantity": 2,
+                  "Items": ["GET", "HEAD"]
+                }
+              },
+              "ForwardedValues": {
+                "QueryString": false,
+                "Cookies": {
+                  "Forward": "none"
+                }
+              },
+              "MinTTL": 0,
+              "DefaultTTL": 3600,
+              "MaxTTL": 86400,
+              "Compress": true
+            },
+            "Enabled": true,
+            "PriceClass": "PriceClass_100"
+          }
+          EOF
+            )
+            
+            echo "$DIST_CONFIG" > /tmp/cloudfront-config.json
+            
+            DIST_OUTPUT=$(aws cloudfront create-distribution \
+              --distribution-config file:///tmp/cloudfront-config.json \
+              --region ${{ env.AWS_REGION }} 2>&1)
+            
+            if [ $? -eq 0 ]; then
+              NEW_DIST_ID=$(echo "$DIST_OUTPUT" | grep -oP '"Id":\s*"\K[^"]+' | head -1 || echo "")
+              NEW_DOMAIN=$(echo "$DIST_OUTPUT" | grep -oP '"DomainName":\s*"\K[^"]+' | head -1 || echo "")
+              echo "✅ CloudFront distribution created!"
+              echo "Distribution ID: $NEW_DIST_ID"
+              echo "Domain: $NEW_DOMAIN"
+              echo ""
+              echo "⚠️  IMPORTANT: Add this to GitHub Secrets:"
+              echo "   CLOUDFRONT_DISTRIBUTION_ID=$NEW_DIST_ID"
+              echo ""
+              echo "⚠️  Note: Distribution deployment takes 5-15 minutes"
+            else
+              echo "⚠️  CloudFront distribution creation failed"
+              echo "$DIST_OUTPUT"
+              echo "You can create it manually via AWS Console"
+            fi
+          fi
+      
+      - name: Invalidate CloudFront cache
         continue-on-error: true
         env:
           CLOUDFRONT_DISTRIBUTION_ID: ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}
@@ -332,6 +462,7 @@ jobs:
               --paths "/*" || echo "CloudFront invalidation failed"
           else
             echo "⚠️  CLOUDFRONT_DISTRIBUTION_ID not set, skipping CloudFront invalidation"
+            echo "   Distribution will be invalidated automatically on next deployment"
           fi
 
   run-migrations:

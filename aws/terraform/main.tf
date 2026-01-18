@@ -20,7 +20,7 @@ resource "aws_db_instance" "postgres" {
   identifier             = "nonprofit-learning-db"
   engine                 = "postgres"
   engine_version         = "14.9"
-  instance_class         = "db.t3.micro"
+  instance_class         = "db.t3.micro"  # Free tier eligible (750 hours/month for 12 months)
   allocated_storage      = 20
   max_allocated_storage  = 100
   storage_type           = "gp2"
