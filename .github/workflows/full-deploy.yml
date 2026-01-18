@@ -173,20 +173,42 @@ jobs:
             --query "ServiceSummaryList[?ServiceName=='nonprofit-learning-backend'].ServiceArn" \
             --output text 2>/dev/null || echo "")
           
-          # Build environment variables JSON (only include non-empty values)
+          # Validate required secrets
+          echo "🔍 Validating required secrets..."
+          MISSING_SECRETS=()
+          
+          if [ -z "${{ secrets.CLERK_SECRET_KEY }}" ]; then
+            MISSING_SECRETS+=("CLERK_SECRET_KEY")
+          fi
+          if [ -z "${{ secrets.CLERK_PUBLISHABLE_KEY }}" ]; then
+            MISSING_SECRETS+=("CLERK_PUBLISHABLE_KEY")
+          fi
+          if [ -z "${{ secrets.CLERK_FRONTEND_API }}" ]; then
+            MISSING_SECRETS+=("CLERK_FRONTEND_API")
+          fi
+          
+          if [ ${#MISSING_SECRETS[@]} -gt 0 ]; then
+            echo "❌ Missing required GitHub Secrets:"
+            for secret in "${MISSING_SECRETS[@]}"; do
+              echo "   - $secret"
+            done
+            echo ""
+            echo "Please add these secrets in:"
+            echo "   GitHub → Settings → Secrets and variables → Actions"
+            exit 1
+          fi
+          
+          echo "✅ All required secrets are set"
+          
+          # Build environment variables JSON
           ENV_VARS="{"
           if [ -n "${{ secrets.DATABASE_URL }}" ]; then
             ENV_VARS="${ENV_VARS}\"DATABASE_URL\":\"${{ secrets.DATABASE_URL }}\","
           fi
-          if [ -n "${{ secrets.CLERK_SECRET_KEY }}" ]; then
-            ENV_VARS="${ENV_VARS}\"CLERK_SECRET_KEY\":\"${{ secrets.CLERK_SECRET_KEY }}\","
-          fi
-          if [ -n "${{ secrets.CLERK_PUBLISHABLE_KEY }}" ]; then
-            ENV_VARS="${ENV_VARS}\"CLERK_PUBLISHABLE_KEY\":\"${{ secrets.CLERK_PUBLISHABLE_KEY }}\","
-          fi
-          if [ -n "${{ secrets.CLERK_FRONTEND_API }}" ]; then
-            ENV_VARS="${ENV_VARS}\"CLERK_FRONTEND_API\":\"${{ secrets.CLERK_FRONTEND_API }}\","
-          fi
+          # Required secrets (already validated above)
+          ENV_VARS="${ENV_VARS}\"CLERK_SECRET_KEY\":\"${{ secrets.CLERK_SECRET_KEY }}\","
+          ENV_VARS="${ENV_VARS}\"CLERK_PUBLISHABLE_KEY\":\"${{ secrets.CLERK_PUBLISHABLE_KEY }}\","
+          ENV_VARS="${ENV_VARS}\"CLERK_FRONTEND_API\":\"${{ secrets.CLERK_FRONTEND_API }}\","
           ENV_VARS="${ENV_VARS}\"ENVIRONMENT\":\"production\","
           ENV_VARS="${ENV_VARS}\"CORS_ORIGINS\":\"${{ secrets.CORS_ORIGINS || '*' }}\""
           ENV_VARS="${ENV_VARS}}"
