@@ -30,10 +30,41 @@ CLERK_SECRET_KEY          # Clerk secret key
 CLERK_PUBLISHABLE_KEY     # Clerk publishable key
 CLERK_FRONTEND_API        # Clerk frontend API URL
 CORS_ORIGINS              # Allowed CORS origins (comma-separated)
+                          # Example: https://your-frontend-domain.com,https://www.your-frontend-domain.com
+                          # Get from: CloudFront distribution URL or S3 website endpoint after frontend deployment
 NEXT_PUBLIC_API_URL       # Backend API URL for frontend
+                          # Example: https://your-app-runner-service.us-east-1.awsapprunner.com
+                          # Get from: AWS App Runner service URL after backend deployment
 CLOUDFRONT_DISTRIBUTION_ID # CloudFront distribution ID (optional)
 AMPLIFY_APP_ID            # AWS Amplify app ID (if using Amplify)
 ```
+
+### How to Get These Values
+
+#### CORS_ORIGINS
+This is the URL(s) where your frontend application is deployed. The backend will only accept requests from these origins.
+
+**Where to find it:**
+- **If using CloudFront**: After creating your CloudFront distribution, use the CloudFront domain name (e.g., `https://d1234567890.cloudfront.net`)
+- **If using S3 website**: Use the S3 website endpoint (e.g., `http://your-bucket-name.s3-website-us-east-1.amazonaws.com`)
+- **If using AWS Amplify**: Use the Amplify app URL (e.g., `https://main.xxxxx.amplifyapp.com`)
+- **For local development**: Include `http://localhost:3000`
+
+**Format**: Comma-separated list of URLs (no trailing slashes)
+- Example: `https://your-frontend-domain.com,https://www.your-frontend-domain.com`
+- Example with localhost: `https://your-frontend-domain.com,http://localhost:3000`
+
+#### NEXT_PUBLIC_API_URL
+This is the public URL of your backend API service. The frontend uses this to make API calls.
+
+**Where to find it:**
+- **After deploying to App Runner**: 
+  1. Go to AWS Console → App Runner → Your service
+  2. Copy the "Service URL" (e.g., `https://xxxxx.us-east-1.awsapprunner.com`)
+  3. This is your `NEXT_PUBLIC_API_URL`
+- **For local development**: `http://localhost:8000`
+
+**Note**: Make sure to include the protocol (`https://` or `http://`) but no trailing slash.
 
 ## Deployment Steps
 

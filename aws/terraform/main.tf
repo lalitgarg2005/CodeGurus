@@ -45,10 +45,40 @@ resource "aws_db_instance" "postgres" {
   }
 }
 
+# Get default VPC
+data "aws_vpc" "default" {
+  count   = var.vpc_id == "" ? 1 : 0
+  default = true
+}
+
+# Get VPC by ID if provided
+data "aws_vpc" "selected" {
+  count = var.vpc_id != "" ? 1 : 0
+  id    = var.vpc_id
+}
+
+locals {
+  vpc_id = var.vpc_id != "" ? var.vpc_id : data.aws_vpc.default[0].id
+  vpc_cidr = var.vpc_id != "" ? data.aws_vpc.selected[0].cidr_block : data.aws_vpc.default[0].cidr_block
+}
+
+# Get subnets in the VPC
+data "aws_subnets" "vpc_subnets" {
+  filter {
+    name   = "vpc-id"
+    values = [local.vpc_id]
+  }
+}
+
+# Use provided subnets or get default subnets
+locals {
+  subnet_ids = length(var.subnet_ids) > 0 ? var.subnet_ids : data.aws_subnets.vpc_subnets.ids
+}
+
 # RDS Subnet Group
 resource "aws_db_subnet_group" "main" {
   name       = "nonprofit-learning-db-subnet-group"
-  subnet_ids = var.subnet_ids
+  subnet_ids = local.subnet_ids
   
   tags = {
     Name = "Nonprofit Learning DB Subnet Group"
@@ -59,12 +89,14 @@ resource "aws_db_subnet_group" "main" {
 resource "aws_security_group" "rds" {
   name        = "nonprofit-learning-rds-sg"
   description = "Security group for RDS PostgreSQL"
+  vpc_id      = local.vpc_id
   
   ingress {
     from_port   = 5432
     to_port     = 5432
     protocol    = "tcp"
-    cidr_blocks = ["10.0.0.0/8"] # Adjust to your VPC CIDR
+    cidr_blocks = [local.vpc_cidr]
+    description = "PostgreSQL access from VPC"
   }
   
   egress {
@@ -72,6 +104,7 @@ resource "aws_security_group" "rds" {
     to_port     = 0
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
+    description = "Allow all outbound"
   }
   
   tags = {
@@ -174,54 +207,4 @@ resource "aws_cloudfront_distribution" "frontend" {
 
 resource "aws_cloudfront_origin_access_identity" "frontend" {
   comment = "OAI for Nonprofit Learning Frontend"
-}
-
-# Variables
-variable "aws_region" {
-  description = "AWS region"
-  type        = string
-  default     = "us-east-1"
-}
-
-variable "db_username" {
-  description = "Database master username"
-  type        = string
-  sensitive   = true
-}
-
-variable "db_password" {
-  description = "Database master password"
-  type        = string
-  sensitive   = true
-}
-
-variable "subnet_ids" {
-  description = "Subnet IDs for RDS"
-  type        = list(string)
-}
-
-# Outputs
-output "rds_endpoint" {
-  value       = aws_db_instance.postgres.endpoint
-  description = "RDS endpoint"
-}
-
-output "ecr_repository_url" {
-  value       = aws_ecr_repository.backend.repository_url
-  description = "ECR repository URL"
-}
-
-output "s3_bucket_name" {
-  value       = aws_s3_bucket.frontend.id
-  description = "S3 bucket name"
-}
-
-output "cloudfront_distribution_id" {
-  value       = aws_cloudfront_distribution.frontend.id
-  description = "CloudFront distribution ID"
-}
-
-output "cloudfront_domain" {
-  value       = aws_cloudfront_distribution.frontend.domain_name
-  description = "CloudFront domain name"
 }

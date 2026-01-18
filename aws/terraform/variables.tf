@@ -17,13 +17,15 @@ variable "db_password" {
 }
 
 variable "subnet_ids" {
-  description = "List of subnet IDs for RDS"
+  description = "List of subnet IDs for RDS (optional - will use default VPC subnets if not provided)"
   type        = list(string)
+  default     = []
 }
 
 variable "vpc_id" {
-  description = "VPC ID for security groups"
+  description = "VPC ID for security groups (optional - will use default VPC if not provided)"
   type        = string
+  default     = ""
 }
 
 variable "environment" {
