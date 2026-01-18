@@ -69,10 +69,20 @@ jobs:
             echo "Service exists, checking status..."
             
             # Wait for service to be in a ready state (not OPERATION_IN_PROGRESS)
-            MAX_WAIT=300  # 5 minutes max
+            MAX_WAIT=600  # 10 minutes max (increased for safety)
             WAIT_TIME=0
-            SLEEP_INTERVAL=10
+            SLEEP_INTERVAL=15  # Check every 15 seconds
             
+            echo "Checking current service status..."
+            SERVICE_STATUS=$(aws apprunner describe-service \
+              --service-arn "$SERVICE_ARN" \
+              --region ${{ env.AWS_REGION }} \
+              --query 'Service.Status' \
+              --output text 2>/dev/null || echo "UNKNOWN")
+            
+            echo "   Initial status: $SERVICE_STATUS"
+            
+            # Wait loop
             while [ $WAIT_TIME -lt $MAX_WAIT ]; do
               SERVICE_STATUS=$(aws apprunner describe-service \
                 --service-arn "$SERVICE_ARN" \
@@ -80,31 +90,50 @@ jobs:
                 --query 'Service.Status' \
                 --output text 2>/dev/null || echo "UNKNOWN")
               
-              echo "   Current status: $SERVICE_STATUS (waited ${WAIT_TIME}s)"
+              echo "   Current status: $SERVICE_STATUS (waited ${WAIT_TIME}s / ${MAX_WAIT}s max)"
               
-              if [ "$SERVICE_STATUS" == "RUNNING" ] || [ "$SERVICE_STATUS" == "PAUSED" ] || [ "$SERVICE_STATUS" == "CREATE_FAILED" ] || [ "$SERVICE_STATUS" == "UPDATE_FAILED" ]; then
-                echo "✅ Service is in a ready state: $SERVICE_STATUS"
+              # Check if service is in a ready state
+              if [ "$SERVICE_STATUS" == "RUNNING" ] || [ "$SERVICE_STATUS" == "PAUSED" ]; then
+                echo "✅ Service is ready for update: $SERVICE_STATUS"
                 break
               fi
               
-              if [ "$SERVICE_STATUS" == "OPERATION_IN_PROGRESS" ]; then
-                echo "   Service is still updating, waiting ${SLEEP_INTERVAL}s..."
+              # Check if service failed (can still try to update)
+              if [ "$SERVICE_STATUS" == "CREATE_FAILED" ] || [ "$SERVICE_STATUS" == "UPDATE_FAILED" ]; then
+                echo "⚠️  Service is in failed state: $SERVICE_STATUS"
+                echo "   Attempting update anyway..."
+                break
+              fi
+              
+              # If still in progress, wait
+              if [ "$SERVICE_STATUS" == "OPERATION_IN_PROGRESS" ] || [ "$SERVICE_STATUS" == "CREATE_IN_PROGRESS" ] || [ "$SERVICE_STATUS" == "UPDATE_IN_PROGRESS" ]; then
+                echo "   ⏳ Service is still in progress, waiting ${SLEEP_INTERVAL}s..."
                 sleep $SLEEP_INTERVAL
                 WAIT_TIME=$((WAIT_TIME + SLEEP_INTERVAL))
-              else
-                echo "   Service status: $SERVICE_STATUS, proceeding..."
-                break
+                continue
               fi
+              
+              # Unknown or other status - proceed with caution
+              echo "   ⚠️  Unknown status: $SERVICE_STATUS, proceeding..."
+              break
             done
             
-            if [ $WAIT_TIME -ge $MAX_WAIT ]; then
-              echo "⚠️  Service took too long to become ready (waited ${MAX_WAIT}s)"
-              echo "   Current status: $SERVICE_STATUS"
-              echo "   You may need to wait and retry later"
+            # Final status check before update
+            FINAL_STATUS=$(aws apprunner describe-service \
+              --service-arn "$SERVICE_ARN" \
+              --region ${{ env.AWS_REGION }} \
+              --query 'Service.Status' \
+              --output text 2>/dev/null || echo "UNKNOWN")
+            
+            if [ "$FINAL_STATUS" == "OPERATION_IN_PROGRESS" ] || [ "$FINAL_STATUS" == "CREATE_IN_PROGRESS" ] || [ "$FINAL_STATUS" == "UPDATE_IN_PROGRESS" ]; then
+              echo "❌ Service is still in progress after waiting ${WAIT_TIME}s"
+              echo "   Current status: $FINAL_STATUS"
+              echo "   Please wait for the current operation to complete, then re-run this workflow"
+              echo "   Check status: https://console.aws.amazon.com/apprunner/home?region=${{ env.AWS_REGION }}#/services"
               exit 0
             fi
             
-            echo "Updating service..."
+            echo "Updating service (status: $FINAL_STATUS)..."
             aws apprunner update-service \
               --service-arn "$SERVICE_ARN" \
               --source-configuration '{
