@@ -321,12 +321,18 @@ jobs:
           echo "⚠️  Note: For full Next.js SSR support, consider using AWS Amplify"
       
       - name: Invalidate CloudFront
-        if: ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID != '' }}
         continue-on-error: true
+        env:
+          CLOUDFRONT_DISTRIBUTION_ID: ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}
         run: |
-          aws cloudfront create-invalidation \
-            --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} \
-            --paths "/*" || echo "CloudFront invalidation failed"
+          if [ -n "$CLOUDFRONT_DISTRIBUTION_ID" ]; then
+            echo "Invalidating CloudFront cache..."
+            aws cloudfront create-invalidation \
+              --distribution-id "$CLOUDFRONT_DISTRIBUTION_ID" \
+              --paths "/*" || echo "CloudFront invalidation failed"
+          else
+            echo "⚠️  CLOUDFRONT_DISTRIBUTION_ID not set, skipping CloudFront invalidation"
+          fi
 
   run-migrations:
     name: Run Database Migrations
