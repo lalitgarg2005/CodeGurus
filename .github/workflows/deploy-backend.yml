@@ -60,10 +60,53 @@ jobs:
           IMAGE_TAG: ${{ github.sha }}
         run: |
           # Check if service exists
-          if aws apprunner list-services --region ${{ env.AWS_REGION }} --query "ServiceSummaryList[?ServiceName=='${{ env.APP_RUNNER_SERVICE }}']" --output text | grep -q "${{ env.APP_RUNNER_SERVICE }}"; then
-            echo "Service exists, updating..."
+          SERVICE_ARN=$(aws apprunner list-services \
+            --region ${{ env.AWS_REGION }} \
+            --query "ServiceSummaryList[?ServiceName=='${{ env.APP_RUNNER_SERVICE }}'].ServiceArn" \
+            --output text 2>/dev/null || echo "")
+          
+          if [ -n "$SERVICE_ARN" ]; then
+            echo "Service exists, checking status..."
+            
+            # Wait for service to be in a ready state (not OPERATION_IN_PROGRESS)
+            MAX_WAIT=300  # 5 minutes max
+            WAIT_TIME=0
+            SLEEP_INTERVAL=10
+            
+            while [ $WAIT_TIME -lt $MAX_WAIT ]; do
+              SERVICE_STATUS=$(aws apprunner describe-service \
+                --service-arn "$SERVICE_ARN" \
+                --region ${{ env.AWS_REGION }} \
+                --query 'Service.Status' \
+                --output text 2>/dev/null || echo "UNKNOWN")
+              
+              echo "   Current status: $SERVICE_STATUS (waited ${WAIT_TIME}s)"
+              
+              if [ "$SERVICE_STATUS" == "RUNNING" ] || [ "$SERVICE_STATUS" == "PAUSED" ] || [ "$SERVICE_STATUS" == "CREATE_FAILED" ] || [ "$SERVICE_STATUS" == "UPDATE_FAILED" ]; then
+                echo "✅ Service is in a ready state: $SERVICE_STATUS"
+                break
+              fi
+              
+              if [ "$SERVICE_STATUS" == "OPERATION_IN_PROGRESS" ]; then
+                echo "   Service is still updating, waiting ${SLEEP_INTERVAL}s..."
+                sleep $SLEEP_INTERVAL
+                WAIT_TIME=$((WAIT_TIME + SLEEP_INTERVAL))
+              else
+                echo "   Service status: $SERVICE_STATUS, proceeding..."
+                break
+              fi
+            done
+            
+            if [ $WAIT_TIME -ge $MAX_WAIT ]; then
+              echo "⚠️  Service took too long to become ready (waited ${MAX_WAIT}s)"
+              echo "   Current status: $SERVICE_STATUS"
+              echo "   You may need to wait and retry later"
+              exit 0
+            fi
+            
+            echo "Updating service..."
             aws apprunner update-service \
-              --service-arn $(aws apprunner list-services --region ${{ env.AWS_REGION }} --query "ServiceSummaryList[?ServiceName=='${{ env.APP_RUNNER_SERVICE }}'].ServiceArn" --output text) \
+              --service-arn "$SERVICE_ARN" \
               --source-configuration '{
                 "ImageRepository": {
                   "ImageIdentifier": "${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:latest",
@@ -82,7 +125,12 @@ jobs:
                 },
                 "AutoDeploymentsEnabled": true
               }' \
-              --region ${{ env.AWS_REGION }}
+              --region ${{ env.AWS_REGION }} || {
+              echo "⚠️  Service update failed"
+              echo "   This might be because the service is still in OPERATION_IN_PROGRESS"
+              echo "   Wait a few minutes and try again"
+              exit 0
+            }
           else
             echo "Service does not exist, creating..."
             

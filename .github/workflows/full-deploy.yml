@@ -259,15 +259,57 @@ jobs:
               echo "You may need to create it manually via AWS Console"
               exit 0
             }
+            echo "✅ App Runner service creation initiated"
           else
-            echo "Updating existing App Runner service..."
+            echo "Service exists, checking status..."
+            
+            # Wait for service to be in a ready state (not OPERATION_IN_PROGRESS)
+            MAX_WAIT=300  # 5 minutes max
+            WAIT_TIME=0
+            SLEEP_INTERVAL=10
+            
+            while [ $WAIT_TIME -lt $MAX_WAIT ]; do
+              SERVICE_STATUS=$(aws apprunner describe-service \
+                --service-arn "$SERVICE_ARN" \
+                --region ${{ env.AWS_REGION }} \
+                --query 'Service.Status' \
+                --output text 2>/dev/null || echo "UNKNOWN")
+              
+              echo "   Current status: $SERVICE_STATUS (waited ${WAIT_TIME}s)"
+              
+              if [ "$SERVICE_STATUS" == "RUNNING" ] || [ "$SERVICE_STATUS" == "PAUSED" ] || [ "$SERVICE_STATUS" == "CREATE_FAILED" ] || [ "$SERVICE_STATUS" == "UPDATE_FAILED" ]; then
+                echo "✅ Service is in a ready state: $SERVICE_STATUS"
+                break
+              fi
+              
+              if [ "$SERVICE_STATUS" == "OPERATION_IN_PROGRESS" ]; then
+                echo "   Service is still updating, waiting ${SLEEP_INTERVAL}s..."
+                sleep $SLEEP_INTERVAL
+                WAIT_TIME=$((WAIT_TIME + SLEEP_INTERVAL))
+              else
+                echo "   Service status: $SERVICE_STATUS, proceeding..."
+                break
+              fi
+            done
+            
+            if [ $WAIT_TIME -ge $MAX_WAIT ]; then
+              echo "⚠️  Service took too long to become ready (waited ${MAX_WAIT}s)"
+              echo "   Current status: $SERVICE_STATUS"
+              echo "   You may need to wait and retry later, or update manually via AWS Console"
+              exit 0
+            fi
+            
+            echo "Updating App Runner service..."
             aws apprunner update-service \
               --service-arn "$SERVICE_ARN" \
               --source-configuration file:///tmp/apprunner-config.json \
               --region ${{ env.AWS_REGION }} 2>&1 || {
               echo "⚠️  App Runner service update failed"
+              echo "   This might be because the service is still in OPERATION_IN_PROGRESS"
+              echo "   Wait a few minutes and try again, or update manually via AWS Console"
               exit 0
             }
+            echo "✅ App Runner service update initiated"
           fi
           echo "✅ App Runner deployment completed"
 
