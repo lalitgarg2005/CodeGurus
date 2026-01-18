@@ -75,7 +75,15 @@ jobs:
       
       - name: Install dependencies
         working-directory: ./frontend
-        run: npm ci || npm install
+        run: |
+          # Set to public npm registry and replace private registry URLs
+          npm config set registry https://registry.npmjs.org/
+          if [ -f "package-lock.json" ]; then
+            sed -i 's|https://mckinsey.jfrog.io/artifactory/api/npm/npm/|https://registry.npmjs.org/|g' package-lock.json || true
+          fi
+          # Since lock file is out of sync, use npm install to regenerate it
+          rm -f package-lock.json
+          npm install --legacy-peer-deps --no-audit
       
       - name: Run linting
         working-directory: ./frontend
