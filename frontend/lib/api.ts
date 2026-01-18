@@ -187,43 +187,27 @@ export const api = {
 };
 
 // Helper function to get auth token from Clerk
-// This works in client components using Clerk's client-side API
+// Helper to get auth token from Clerk
+// Note: In client components, use useAuth().getToken() directly instead
+// This function is kept for backward compatibility but may not work in all cases
 export const getAuthToken = async (): Promise<string | null> => {
   if (typeof window === 'undefined') return null;
   
   try {
-    // Use Clerk's client-side getToken function
-    // This is the recommended way to get tokens in Next.js App Router client components
-    const { getToken } = await import('@clerk/nextjs');
-    
-    // getToken() can be called without arguments in client components
-    // It will automatically use the current session
-    const token = await getToken();
-    
-    if (!token) {
-      console.warn('getToken() returned null - user might not be fully authenticated');
-      // Try to wait a bit and retry (Clerk might need time to initialize)
-      await new Promise(resolve => setTimeout(resolve, 300));
-      const retryToken = await getToken();
-      return retryToken;
+    // Try to get token from Clerk instance on window (if available)
+    if ((window as any).__clerk_frontend_api) {
+      const clerk = (window as any).__clerk_frontend_api;
+      if (clerk.session) {
+        const token = await clerk.session.getToken();
+        if (token) return token;
+      }
     }
     
-    return token;
+    // Fallback: try to access Clerk through React context
+    // Note: This may not work reliably - components should use useAuth().getToken() instead
+    return null;
   } catch (error) {
     console.error('Error getting auth token:', error);
-    
-    // Fallback: try to get token from Clerk instance on window
-    try {
-      if ((window as any).__clerk_frontend_api) {
-        const clerk = (window as any).__clerk_frontend_api;
-        if (clerk.session) {
-          return await clerk.session.getToken();
-        }
-      }
-    } catch (fallbackError) {
-      console.error('Fallback token retrieval failed:', fallbackError);
-    }
-    
     return null;
   }
 };

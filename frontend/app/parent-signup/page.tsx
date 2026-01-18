@@ -48,23 +48,11 @@ export default function ParentSignup() {
       // Step 2: Get auth token - required for parent registration endpoint
       let token: string | null = null;
       
-      // Try multiple methods to get the token
+      // Use useAuth hook's getToken (the only way to get token in client components)
       try {
-        // Method 1: Use useAuth hook's getToken
         token = await getToken();
       } catch (tokenError) {
         console.error('Error getting token from useAuth:', tokenError);
-      }
-      
-      // Method 2: Try fallback if hook method failed
-      if (!token) {
-        try {
-          // Import getToken directly as fallback
-          const { getToken: getTokenDirect } = await import('@clerk/nextjs');
-          token = await getTokenDirect();
-        } catch (fallbackError) {
-          console.error('Error getting token from direct import:', fallbackError);
-        }
       }
       
       // Retry once if token is still null (Clerk might need a moment to initialize)
@@ -72,10 +60,6 @@ export default function ParentSignup() {
         await new Promise(resolve => setTimeout(resolve, 1000));
         try {
           token = await getToken();
-          if (!token) {
-            const { getToken: getTokenDirect } = await import('@clerk/nextjs');
-            token = await getTokenDirect();
-          }
         } catch (retryError) {
           console.error('Retry token error:', retryError);
         }
