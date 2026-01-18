@@ -27,17 +27,52 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Check Amplify App ID
+        run: |
+          if [ -z "${{ env.AMPLIFY_APP_ID }}" ] || [ "${{ env.AMPLIFY_APP_ID }}" == "" ]; then
+            echo "❌ AMPLIFY_APP_ID is not set in GitHub Secrets"
+            echo ""
+            echo "To fix this:"
+            echo "1. Go to AWS Console → Amplify → Your App"
+            echo "2. Copy the App ID (format: d1234567890)"
+            echo "3. Go to GitHub → Settings → Secrets → Actions"
+            echo "4. Add secret: AMPLIFY_APP_ID = your-app-id"
+            echo ""
+            echo "Or create an Amplify app first:"
+            echo "  aws amplify create-app --name nonprofit-learning-frontend --region us-east-1"
+            exit 1
+          fi
+          echo "✅ Amplify App ID found: ${{ env.AMPLIFY_APP_ID }}"
+
       - name: Deploy to Amplify
         run: |
+          echo "Triggering Amplify build..."
           # Trigger Amplify build
           aws amplify start-job \
-            --app-id ${{ env.AMPLIFY_APP_ID }} \
+            --app-id "${{ env.AMPLIFY_APP_ID }}" \
             --branch-name main \
             --job-type RELEASE \
-            --region ${{ env.AWS_REGION }}
+            --region ${{ env.AWS_REGION }} || {
+            echo "❌ Failed to trigger Amplify build"
+            echo ""
+            echo "Troubleshooting:"
+            echo "1. Verify AMPLIFY_APP_ID is correct: ${{ env.AMPLIFY_APP_ID }}"
+            echo "2. Check if Amplify app exists:"
+            echo "   aws amplify get-app --app-id ${{ env.AMPLIFY_APP_ID }} --region ${{ env.AWS_REGION }}"
+            echo "3. Verify branch 'main' exists in Amplify app"
+            echo "4. Check IAM permissions - you need amplify:StartJob permission"
+            echo "   See aws/terraform/IAM_PERMISSIONS.md for setup instructions"
+            echo "   Quick fix: Attach AmplifyFullAccess policy to your IAM user"
+            exit 1
+          }
 
       - name: Deployment status
         run: |
           echo "✅ Frontend deployment triggered on AWS Amplify"
           echo "App ID: ${{ env.AMPLIFY_APP_ID }}"
           echo "Region: ${{ env.AWS_REGION }}"
+          echo ""
+          echo "📋 Next steps:"
+          echo "1. Check build status in AWS Amplify Console"
+          echo "2. Wait for build to complete (usually 5-10 minutes)"
+          echo "3. Access your app at the Amplify URL"

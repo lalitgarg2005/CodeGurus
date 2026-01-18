@@ -120,6 +120,25 @@ Create a new IAM policy with the following JSON and attach it to your user:
     {
       "Effect": "Allow",
       "Action": [
+        "amplify:StartJob",
+        "amplify:GetJob",
+        "amplify:ListJobs",
+        "amplify:GetApp",
+        "amplify:ListApps",
+        "amplify:GetBranch",
+        "amplify:ListBranches",
+        "amplify:CreateApp",
+        "amplify:UpdateApp",
+        "amplify:DeleteApp",
+        "amplify:CreateBranch",
+        "amplify:UpdateBranch",
+        "amplify:DeleteBranch"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
         "iam:PassRole"
       ],
       "Resource": "*",
@@ -266,6 +285,25 @@ cat > terraform-policy.json << 'EOF'
     {
       "Effect": "Allow",
       "Action": [
+        "amplify:StartJob",
+        "amplify:GetJob",
+        "amplify:ListJobs",
+        "amplify:GetApp",
+        "amplify:ListApps",
+        "amplify:GetBranch",
+        "amplify:ListBranches",
+        "amplify:CreateApp",
+        "amplify:UpdateApp",
+        "amplify:DeleteApp",
+        "amplify:CreateBranch",
+        "amplify:UpdateBranch",
+        "amplify:DeleteBranch"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
         "iam:PassRole"
       ],
       "Resource": "*",
@@ -320,6 +358,10 @@ aws iam attach-user-policy \
 aws iam attach-user-policy \
   --user-name lalitgarg05 \
   --policy-arn arn:aws:iam::aws:policy/CloudFrontFullAccess
+
+aws iam attach-user-policy \
+  --user-name lalitgarg05 \
+  --policy-arn arn:aws:iam::aws:policy/AmplifyFullAccess
 ```
 
 ⚠️ **Note**: AWS managed policies grant broader permissions than necessary. The custom policy above is more secure and follows the principle of least privilege.
@@ -340,6 +382,9 @@ aws rds describe-db-instances
 
 # Test if you can describe security groups
 aws ec2 describe-security-groups --max-items 1
+
+# Test Amplify permissions (if using Amplify)
+aws amplify list-apps --region us-east-1 --max-items 1
 ```
 
 ## After Fixing Permissions
@@ -354,6 +399,25 @@ aws ec2 describe-security-groups --max-items 1
 2. **If you still get errors**, wait a few minutes for IAM permissions to propagate (usually instant, but can take up to 5 minutes).
 
 ## Troubleshooting
+
+### Error: "amplify:StartJob" permission denied
+
+If you get an error like:
+```
+AccessDeniedException: User is not authorized to perform: amplify:StartJob
+```
+
+**Solution:**
+1. Add Amplify permissions to your IAM policy (see policy JSON above)
+2. Or attach the managed policy: `AmplifyFullAccess`
+3. Wait a few minutes for permissions to propagate
+
+**Quick fix:**
+```bash
+aws iam attach-user-policy \
+  --user-name lalitgarg05 \
+  --policy-arn arn:aws:iam::aws:policy/AmplifyFullAccess
+```
 
 ### Still Getting Permission Errors?
 
