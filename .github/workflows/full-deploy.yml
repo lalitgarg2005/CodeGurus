@@ -191,7 +191,24 @@ jobs:
           ENV_VARS="${ENV_VARS}\"CORS_ORIGINS\":\"${{ secrets.CORS_ORIGINS || '*' }}\""
           ENV_VARS="${ENV_VARS}}"
           
-          # Create source configuration JSON file
+          # Get or create App Runner access role ARN
+          ACCESS_ROLE_ARN="${{ secrets.APP_RUNNER_ACCESS_ROLE_ARN }}"
+          if [ -z "$ACCESS_ROLE_ARN" ]; then
+            echo "⚠️  APP_RUNNER_ACCESS_ROLE_ARN not set, trying to find/create role..."
+            # Try to find existing role
+            ROLE_NAME="AppRunnerECRAccessRole"
+            ACCESS_ROLE_ARN=$(aws iam get-role --role-name "$ROLE_NAME" --query 'Role.Arn' --output text 2>/dev/null || echo "")
+            
+            if [ -z "$ACCESS_ROLE_ARN" ]; then
+              echo "❌ App Runner access role not found"
+              echo "Please create the role first using: ./create-apprunner-role.sh"
+              echo "Or set APP_RUNNER_ACCESS_ROLE_ARN in GitHub Secrets"
+              exit 1
+            fi
+          fi
+          echo "✅ Using access role: $ACCESS_ROLE_ARN"
+          
+          # Create source configuration JSON file with authentication
           cat > /tmp/apprunner-config.json <<EOF
           {
             "ImageRepository": {
@@ -201,6 +218,9 @@ jobs:
                 "Port": "8000",
                 "RuntimeEnvironmentVariables": ${ENV_VARS}
               }
+            },
+            "AuthenticationConfiguration": {
+              "AccessRoleArn": "${ACCESS_ROLE_ARN}"
             },
             "AutoDeploymentsEnabled": true
           }
