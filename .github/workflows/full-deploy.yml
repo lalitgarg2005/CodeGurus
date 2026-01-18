@@ -281,9 +281,9 @@ jobs:
           NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL || 'http://localhost:8000' }}
           NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY || 'pk_test_placeholder' }}
           NEXT_PUBLIC_CLERK_FRONTEND_API: ${{ secrets.CLERK_FRONTEND_API || 'https://placeholder.clerk.accounts.dev' }}
-          NEXT_OUTPUT: export
+          # Note: Not using NEXT_OUTPUT=export because Clerk requires dynamic rendering
         run: |
-          echo "Building Next.js application for static export..."
+          echo "Building Next.js application (dynamic rendering for Clerk)..."
           npm run build
           echo "✅ Build completed successfully"
           echo "Build output location: out/"
@@ -333,44 +333,42 @@ jobs:
           
           echo "✅ S3 bucket configured"
       
-      - name: Deploy static files to S3
+      - name: Deploy to S3
         working-directory: ./frontend
         run: |
-          if [ ! -d "out" ]; then
-            echo "❌ Build output directory 'out' not found!"
-            echo "Build may have failed. Checking build status..."
+          echo "⚠️  Note: Next.js with Clerk requires dynamic rendering"
+          echo "This means we can't use pure static export to S3"
+          echo ""
+          echo "Options:"
+          echo "1. Deploy .next/standalone to App Runner or EC2 (recommended)"
+          echo "2. Use CloudFront + Lambda@Edge for dynamic rendering"
+          echo "3. Use AWS Amplify (supports Next.js dynamic rendering)"
+          echo ""
+          echo "For now, we'll export what we can for S3..."
+          
+          # Check if .next directory exists (dynamic build)
+          if [ -d ".next" ]; then
+            echo "✅ Dynamic build completed (.next directory found)"
+            echo ""
+            echo "To deploy this, you need a Node.js server:"
+            echo "- App Runner: Deploy .next/standalone"
+            echo "- EC2: Run 'npm start' from .next/standalone"
+            echo "- Or use AWS Amplify for full Next.js support"
+            echo ""
+            echo "⚠️  Skipping S3 deployment - requires server-side rendering"
+            echo "💡 Consider deploying frontend to App Runner instead of S3"
+          elif [ -d "out" ]; then
+            echo "Static export found, deploying to S3..."
+            aws s3 sync out/ s3://nonprofit-learning-frontend/ \
+              --delete \
+              --cache-control "public, max-age=0, must-revalidate" \
+              --exclude "*.map"
+            echo "✅ Files deployed to S3"
+          else
+            echo "❌ No build output found!"
             ls -la
             exit 1
           fi
-          
-          echo "Deploying static files to S3..."
-          echo "Source: out/"
-          echo "Destination: s3://nonprofit-learning-frontend/"
-          
-          # Sync all files from out/ to S3
-          aws s3 sync out/ s3://nonprofit-learning-frontend/ \
-            --delete \
-            --cache-control "public, max-age=0, must-revalidate" \
-            --exclude "*.map"
-          
-          # Set proper cache headers for static assets
-          aws s3 sync out/ s3://nonprofit-learning-frontend/ \
-            --exclude "*" \
-            --include "*.js" \
-            --include "*.css" \
-            --include "*.png" \
-            --include "*.jpg" \
-            --include "*.jpeg" \
-            --include "*.gif" \
-            --include "*.svg" \
-            --include "*.woff" \
-            --include "*.woff2" \
-            --cache-control "public, max-age=31536000, immutable" \
-            --delete || true
-          
-          echo "✅ Files deployed to S3"
-          echo "Listing S3 bucket contents..."
-          aws s3 ls s3://nonprofit-learning-frontend/ --recursive | head -20
       
       - name: Create or update CloudFront distribution
         continue-on-error: true

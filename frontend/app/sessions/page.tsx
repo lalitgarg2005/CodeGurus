@@ -6,6 +6,9 @@ import { api, setAuthToken, getAuthToken } from '@/lib/api';
 import { Session, User } from '@/types';
 import Link from 'next/link';
 
+// Force dynamic rendering (Clerk requires headers)
+export const dynamic = 'force-dynamic';
+
 export default function SessionsPage() {
   const { user, isLoaded } = useUser();
   const [sessions, setSessions] = useState<Session[]>([]);

@@ -5,6 +5,9 @@ import Link from 'next/link';
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 
+// Force dynamic rendering (Clerk requires headers)
+export const dynamic = 'force-dynamic';
+
 export default function Home() {
   const { isSignedIn, user, isLoaded } = useUser();
   const router = useRouter();

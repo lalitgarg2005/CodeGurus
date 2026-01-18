@@ -6,6 +6,9 @@ import { api, setAuthToken, getAuthToken } from '@/lib/api';
 import { Skill, User } from '@/types';
 import Link from 'next/link';
 
+// Force dynamic rendering (Clerk requires headers)
+export const dynamic = 'force-dynamic';
+
 export default function SkillsPage() {
   const { user, isLoaded } = useUser();
   const [skills, setSkills] = useState<Skill[]>([]);

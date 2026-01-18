@@ -7,6 +7,9 @@ import { api, setAuthToken, getAuthToken } from '@/lib/api';
 import { User } from '@/types';
 import Link from 'next/link';
 
+// Force dynamic rendering (Clerk requires headers)
+export const dynamic = 'force-dynamic';
+
 export default function AdminDashboard() {
   const { user, isLoaded } = useUser();
   const router = useRouter();

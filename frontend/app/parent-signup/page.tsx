@@ -5,6 +5,9 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, setAuthToken } from '@/lib/api';
 
+// Force dynamic rendering (Clerk requires headers)
+export const dynamic = 'force-dynamic';
+
 export default function ParentSignup() {
   const { user, isLoaded, isSignedIn } = useUser();
   const { getToken } = useAuth();
