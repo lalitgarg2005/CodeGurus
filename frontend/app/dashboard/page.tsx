@@ -53,6 +53,8 @@ export default function Dashboard() {
 
   // Role-based navigation
   const getRoleLinks = () => {
+    if (!currentUser) return null;
+    
     switch (currentUser.role) {
       case 'ADMIN':
         return (
