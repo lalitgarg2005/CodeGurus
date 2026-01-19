@@ -1,5 +1,6 @@
 #!/bin/bash
-set -e
+# Don't exit on error - allow app to start even if DB check fails
+set +e
 
 echo "🚀 Starting Nonprofit Learning Platform Backend..."
 
@@ -16,27 +17,40 @@ DB_HOST=${DB_HOST:-postgres}
 DB_PORT=${DB_PORT:-5432}
 DB_USER=${DB_USER:-postgres}
 
-# Wait for database to be ready
-echo "⏳ Waiting for database to be ready..."
-max_attempts=30
+# Wait for database to be ready (but don't fail if it's not)
+echo "⏳ Checking database connection..."
+max_attempts=15  # Reduced attempts for faster startup
 attempt=0
+DB_READY=false
 
 until pg_isready -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" > /dev/null 2>&1; do
   attempt=$((attempt + 1))
   if [ $attempt -ge $max_attempts ]; then
-    echo "❌ Database connection failed after $max_attempts attempts"
-    exit 1
+    echo "⚠️  Database not reachable after $max_attempts attempts"
+    echo "   App will start anyway - database connection will be retried by the application"
+    DB_READY=false
+    break
   fi
-  echo "Database is unavailable - sleeping (attempt $attempt/$max_attempts)"
+  echo "   Database check (attempt $attempt/$max_attempts)..."
   sleep 2
 done
 
-echo "✅ Database is ready!"
-
-# Run migrations
-echo "📦 Running database migrations..."
-alembic upgrade head || echo "⚠️  Migration warning (might be expected)"
+if [ "$attempt" -lt "$max_attempts" ]; then
+  echo "✅ Database is reachable!"
+  DB_READY=true
+  
+  # Run migrations only if database is reachable
+  echo "📦 Running database migrations..."
+  alembic upgrade head || {
+    echo "⚠️  Migration failed - app will continue (migrations can be run manually)"
+  }
+else
+  echo "⚠️  Skipping migrations - database not reachable"
+  echo "   Migrations can be run manually once database is accessible"
+fi
 
 echo "🎉 Starting FastAPI server..."
 # Execute any command passed (useful for --reload flag in dev)
+# Re-enable exit on error for the actual application
+set -e
 exec "$@"
