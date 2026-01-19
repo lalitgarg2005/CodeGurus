@@ -230,6 +230,48 @@ jobs:
           fi
           echo "✅ Using access role: $ACCESS_ROLE_ARN"
           
+          # Get VPC and subnet information for VPC configuration
+          RDS_VPC=$(aws rds describe-db-instances \
+            --db-instance-identifier nonprofit-learning-db \
+            --region ${{ env.AWS_REGION }} \
+            --query 'DBInstances[0].DBSubnetGroup.VpcId' \
+            --output text 2>/dev/null || echo "")
+          
+          # Get App Runner security group
+          APP_RUNNER_SG=$(aws ec2 describe-security-groups \
+            --filters "Name=group-name,Values=nonprofit-learning-apprunner-sg" "Name=vpc-id,Values=$RDS_VPC" \
+            --region ${{ env.AWS_REGION }} \
+            --query 'SecurityGroups[0].GroupId' \
+            --output text 2>/dev/null || echo "")
+          
+          # Get subnets (need at least 2 in different AZs)
+          SUBNET_1=$(aws ec2 describe-subnets \
+            --filters "Name=vpc-id,Values=$RDS_VPC" \
+            --region ${{ env.AWS_REGION }} \
+            --query 'Subnets[0].SubnetId' \
+            --output text 2>/dev/null || echo "")
+          
+          SUBNET_1_AZ=$(aws ec2 describe-subnets \
+            --filters "Name=vpc-id,Values=$RDS_VPC" \
+            --region ${{ env.AWS_REGION }} \
+            --query 'Subnets[0].AvailabilityZone' \
+            --output text 2>/dev/null || echo "")
+          
+          SUBNET_2=$(aws ec2 describe-subnets \
+            --filters "Name=vpc-id,Values=$RDS_VPC" "Name=availability-zone,Values=!$SUBNET_1_AZ" \
+            --region ${{ env.AWS_REGION }} \
+            --query 'Subnets[0].SubnetId' \
+            --output text 2>/dev/null || echo "")
+          
+          # If no subnet in different AZ, use second subnet anyway
+          if [ -z "$SUBNET_2" ]; then
+            SUBNET_2=$(aws ec2 describe-subnets \
+              --filters "Name=vpc-id,Values=$RDS_VPC" \
+              --region ${{ env.AWS_REGION }} \
+              --query 'Subnets[1].SubnetId' \
+              --output text 2>/dev/null || echo "")
+          fi
+          
           # Create source configuration JSON file with authentication
           cat > /tmp/apprunner-config.json <<EOF
           {
@@ -248,18 +290,65 @@ jobs:
           }
           EOF
           
+          # Build network configuration if VPC info is available
+          if [ -n "$RDS_VPC" ] && [ -n "$SUBNET_1" ] && [ -n "$SUBNET_2" ]; then
+            echo "✅ VPC configuration available"
+            echo "   VPC: $RDS_VPC"
+            echo "   Subnets: $SUBNET_1, $SUBNET_2"
+            
+            if [ -n "$APP_RUNNER_SG" ]; then
+              echo "   Security Group: $APP_RUNNER_SG"
+              NETWORK_CONFIG="--network-configuration '{
+                \"EgressConfiguration\": {
+                  \"EgressType\": \"VPC\",
+                  \"VpcConnectorArn\": null
+                },
+                \"IngressConfiguration\": {
+                  \"IsPubliclyAccessible\": true
+                }
+              }'"
+            else
+              echo "⚠️  App Runner security group not found, creating without VPC config"
+              NETWORK_CONFIG=""
+            fi
+          else
+            echo "⚠️  VPC information not available, creating without VPC configuration"
+            echo "   Note: Service won't be able to access RDS without VPC configuration"
+            NETWORK_CONFIG=""
+          fi
+          
           if [ -z "$SERVICE_ARN" ]; then
             echo "Creating new App Runner service..."
-            aws apprunner create-service \
-              --service-name nonprofit-learning-backend \
-              --source-configuration file:///tmp/apprunner-config.json \
-              --instance-configuration '{"Cpu": "1 vCPU", "Memory": "2 GB"}' \
-              --region ${{ env.AWS_REGION }} 2>&1 || {
-              echo "⚠️  App Runner service creation failed"
-              echo "You may need to create it manually via AWS Console"
-              exit 0
-            }
+            
+            if [ -n "$NETWORK_CONFIG" ] && [ -n "$RDS_VPC" ] && [ -n "$SUBNET_1" ] && [ -n "$SUBNET_2" ] && [ -n "$APP_RUNNER_SG" ]; then
+              # Create with VPC configuration (requires manual VPC connector setup or use console)
+              echo "⚠️  VPC configuration requires VPC connector or manual setup"
+              echo "   Creating service without VPC config - you'll need to configure VPC manually"
+              echo "   See FIX_APP_RUNNER_VPC.md for instructions"
+              
+              aws apprunner create-service \
+                --service-name nonprofit-learning-backend \
+                --source-configuration file:///tmp/apprunner-config.json \
+                --instance-configuration '{"Cpu": "1 vCPU", "Memory": "2 GB"}' \
+                --region ${{ env.AWS_REGION }} 2>&1 || {
+                echo "⚠️  App Runner service creation failed"
+                echo "You may need to create it manually via AWS Console with VPC configuration"
+                exit 0
+              }
+            else
+              aws apprunner create-service \
+                --service-name nonprofit-learning-backend \
+                --source-configuration file:///tmp/apprunner-config.json \
+                --instance-configuration '{"Cpu": "1 vCPU", "Memory": "2 GB"}' \
+                --region ${{ env.AWS_REGION }} 2>&1 || {
+                echo "⚠️  App Runner service creation failed"
+                echo "You may need to create it manually via AWS Console"
+                exit 0
+              }
+            fi
             echo "✅ App Runner service creation initiated"
+            echo "⚠️  IMPORTANT: Configure VPC access via AWS Console to enable RDS connectivity"
+            echo "   See FIX_APP_RUNNER_VPC.md for detailed instructions"
           else
             echo "Service exists, checking status..."
             
