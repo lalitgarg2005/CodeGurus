@@ -2,7 +2,7 @@
 Application configuration using Pydantic settings.
 """
 from pydantic_settings import BaseSettings
-from typing import List
+from typing import List, Optional
 
 
 class Settings(BaseSettings):
@@ -11,10 +11,10 @@ class Settings(BaseSettings):
     # Database - defaults to SQLite for easy development setup
     DATABASE_URL: str = "sqlite:///./nonprofit_learning.db"
     
-    # Clerk
-    CLERK_SECRET_KEY: str
-    CLERK_PUBLISHABLE_KEY: str
-    CLERK_FRONTEND_API: str
+    # Clerk (optional at startup; warn if missing)
+    CLERK_SECRET_KEY: str = ""
+    CLERK_PUBLISHABLE_KEY: str = ""
+    CLERK_FRONTEND_API: str = ""
     
     # Application
     ENVIRONMENT: str = "development"
@@ -27,7 +27,8 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> List[str]:
         """Parse CORS origins from comma-separated string."""
-        return [origin.strip() for origin in self.CORS_ORIGINS.split(",")]
+        origins = [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+        return origins or ["*"]
     
     class Config:
         env_file = ".env"

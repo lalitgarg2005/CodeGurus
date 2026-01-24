@@ -1,6 +1,7 @@
 """
 Main FastAPI application.
 """
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
@@ -19,6 +20,27 @@ app = FastAPI(
     docs_url="/api/v1/docs",
     redoc_url="/api/v1/redoc"
 )
+
+logger = logging.getLogger("app")
+
+# Log missing optional configuration on startup (don't block health checks)
+@app.on_event("startup")
+async def log_missing_config() -> None:
+    missing = []
+    if not settings.CLERK_SECRET_KEY:
+        missing.append("CLERK_SECRET_KEY")
+    if not settings.CLERK_PUBLISHABLE_KEY:
+        missing.append("CLERK_PUBLISHABLE_KEY")
+    if not settings.CLERK_FRONTEND_API:
+        missing.append("CLERK_FRONTEND_API")
+    if not settings.DATABASE_URL:
+        missing.append("DATABASE_URL")
+
+    if missing:
+        logger.warning(
+            "Missing environment variables: %s. App will start, but some features may fail.",
+            ", ".join(missing),
+        )
 
 # Configure CORS
 app.add_middleware(
