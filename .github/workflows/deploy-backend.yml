@@ -54,160 +54,64 @@ jobs:
           
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-      - name: Create or update App Runner service
+      - name: Deploy to EC2
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
+          ECR_REPOSITORY: ${{ env.ECR_REPOSITORY }}
+          IMAGE_TAG: latest
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_SSH_PORT: ${{ secrets.EC2_SSH_PORT || '22' }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+          CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY }}
+          CLERK_FRONTEND_API: ${{ secrets.CLERK_FRONTEND_API }}
+          CORS_ORIGINS: ${{ secrets.CORS_ORIGINS || '*' }}
         run: |
-          # Check if service exists
-          SERVICE_ARN=$(aws apprunner list-services \
-            --region ${{ env.AWS_REGION }} \
-            --query "ServiceSummaryList[?ServiceName=='${{ env.APP_RUNNER_SERVICE }}'].ServiceArn" \
-            --output text 2>/dev/null || echo "")
-          
-          if [ -n "$SERVICE_ARN" ]; then
-            echo "Service exists, checking status..."
-            
-            # Wait for service to be in a ready state (not OPERATION_IN_PROGRESS)
-            MAX_WAIT=600  # 10 minutes max (increased for safety)
-            WAIT_TIME=0
-            SLEEP_INTERVAL=15  # Check every 15 seconds
-            
-            echo "Checking current service status..."
-            SERVICE_STATUS=$(aws apprunner describe-service \
-              --service-arn "$SERVICE_ARN" \
-              --region ${{ env.AWS_REGION }} \
-              --query 'Service.Status' \
-              --output text 2>/dev/null || echo "UNKNOWN")
-            
-            echo "   Initial status: $SERVICE_STATUS"
-            
-            # Wait loop
-            while [ $WAIT_TIME -lt $MAX_WAIT ]; do
-              SERVICE_STATUS=$(aws apprunner describe-service \
-                --service-arn "$SERVICE_ARN" \
-                --region ${{ env.AWS_REGION }} \
-                --query 'Service.Status' \
-                --output text 2>/dev/null || echo "UNKNOWN")
-              
-              echo "   Current status: $SERVICE_STATUS (waited ${WAIT_TIME}s / ${MAX_WAIT}s max)"
-              
-              # Check if service is in a ready state
-              if [ "$SERVICE_STATUS" == "RUNNING" ] || [ "$SERVICE_STATUS" == "PAUSED" ]; then
-                echo "✅ Service is ready for update: $SERVICE_STATUS"
-                break
-              fi
-              
-              # Check if service failed (can still try to update)
-              if [ "$SERVICE_STATUS" == "CREATE_FAILED" ] || [ "$SERVICE_STATUS" == "UPDATE_FAILED" ]; then
-                echo "⚠️  Service is in failed state: $SERVICE_STATUS"
-                echo "   Attempting update anyway..."
-                break
-              fi
-              
-              # If still in progress, wait
-              if [ "$SERVICE_STATUS" == "OPERATION_IN_PROGRESS" ] || [ "$SERVICE_STATUS" == "CREATE_IN_PROGRESS" ] || [ "$SERVICE_STATUS" == "UPDATE_IN_PROGRESS" ]; then
-                echo "   ⏳ Service is still in progress, waiting ${SLEEP_INTERVAL}s..."
-                sleep $SLEEP_INTERVAL
-                WAIT_TIME=$((WAIT_TIME + SLEEP_INTERVAL))
-                continue
-              fi
-              
-              # Unknown or other status - proceed with caution
-              echo "   ⚠️  Unknown status: $SERVICE_STATUS, proceeding..."
-              break
-            done
-            
-            # Final status check before update
-            FINAL_STATUS=$(aws apprunner describe-service \
-              --service-arn "$SERVICE_ARN" \
-              --region ${{ env.AWS_REGION }} \
-              --query 'Service.Status' \
-              --output text 2>/dev/null || echo "UNKNOWN")
-            
-            if [ "$FINAL_STATUS" == "OPERATION_IN_PROGRESS" ] || [ "$FINAL_STATUS" == "CREATE_IN_PROGRESS" ] || [ "$FINAL_STATUS" == "UPDATE_IN_PROGRESS" ]; then
-              echo "❌ Service is still in progress after waiting ${WAIT_TIME}s"
-              echo "   Current status: $FINAL_STATUS"
-              echo "   Please wait for the current operation to complete, then re-run this workflow"
-              echo "   Check status: https://console.aws.amazon.com/apprunner/home?region=${{ env.AWS_REGION }}#/services"
-              exit 0
-            fi
-            
-            echo "Updating service (status: $FINAL_STATUS)..."
-            aws apprunner update-service \
-              --service-arn "$SERVICE_ARN" \
-              --source-configuration '{
-                "ImageRepository": {
-                  "ImageIdentifier": "${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:latest",
-                  "ImageRepositoryType": "ECR",
-                  "ImageConfiguration": {
-                    "Port": "8000",
-                    "RuntimeEnvironmentVariables": {
-                      "DATABASE_URL": "${{ secrets.DATABASE_URL }}",
-                      "CLERK_SECRET_KEY": "${{ secrets.CLERK_SECRET_KEY }}",
-                      "CLERK_PUBLISHABLE_KEY": "${{ secrets.CLERK_PUBLISHABLE_KEY }}",
-                      "CLERK_FRONTEND_API": "${{ secrets.CLERK_FRONTEND_API }}",
-                      "ENVIRONMENT": "production",
-                      "CORS_ORIGINS": "${{ secrets.CORS_ORIGINS }}"
-                    }
-                  }
-                },
-                "AutoDeploymentsEnabled": true
-              }' \
-              --region ${{ env.AWS_REGION }} || {
-              echo "⚠️  Service update failed"
-              echo "   This might be because the service is still in OPERATION_IN_PROGRESS"
-              echo "   Wait a few minutes and try again"
-              exit 0
-            }
-          else
-            echo "Service does not exist, creating..."
-            
-            # Get or create App Runner access role ARN
-            ACCESS_ROLE_ARN="${{ secrets.APP_RUNNER_ACCESS_ROLE_ARN }}"
-            if [ -z "$ACCESS_ROLE_ARN" ]; then
-              echo "⚠️  APP_RUNNER_ACCESS_ROLE_ARN not set, trying to find role..."
-              ROLE_NAME="AppRunnerECRAccessRole"
-              ACCESS_ROLE_ARN=$(aws iam get-role --role-name "$ROLE_NAME" --query 'Role.Arn' --output text 2>/dev/null || echo "")
-              
-              if [ -z "$ACCESS_ROLE_ARN" ]; then
-                echo "❌ App Runner access role not found"
-                echo "Please create the role first using: ./create-apprunner-role.sh"
-                echo "Or set APP_RUNNER_ACCESS_ROLE_ARN in GitHub Secrets"
-                exit 1
-              fi
-            fi
-            echo "✅ Using access role: $ACCESS_ROLE_ARN"
-            
-            aws apprunner create-service \
-              --service-name ${{ env.APP_RUNNER_SERVICE }} \
-              --source-configuration "{
-                \"ImageRepository\": {
-                  \"ImageIdentifier\": \"${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:latest\",
-                  \"ImageRepositoryType\": \"ECR\",
-                  \"ImageConfiguration\": {
-                    \"Port\": \"8000\",
-                    \"RuntimeEnvironmentVariables\": {
-                      \"DATABASE_URL\": \"${{ secrets.DATABASE_URL }}\",
-                      \"CLERK_SECRET_KEY\": \"${{ secrets.CLERK_SECRET_KEY }}\",
-                      \"CLERK_PUBLISHABLE_KEY\": \"${{ secrets.CLERK_PUBLISHABLE_KEY }}\",
-                      \"CLERK_FRONTEND_API\": \"${{ secrets.CLERK_FRONTEND_API }}\",
-                      \"ENVIRONMENT\": \"production\",
-                      \"CORS_ORIGINS\": \"${{ secrets.CORS_ORIGINS }}\"
-                    }
-                  }
-                },
-                \"AuthenticationConfiguration\": {
-                  \"AccessRoleArn\": \"${ACCESS_ROLE_ARN}\"
-                },
-                \"AutoDeploymentsEnabled\": true
-              }" \
-              --instance-configuration '{
-                "Cpu": "1 vCPU",
-                "Memory": "2 GB"
-              }' \
-              --region ${{ env.AWS_REGION }}
+          set -e
+          if [ -z "$EC2_HOST" ] || [ -z "$EC2_USER" ] || [ -z "$EC2_SSH_KEY" ]; then
+            echo "❌ Missing EC2 deployment secrets"
+            echo "   Required: EC2_HOST, EC2_USER, EC2_SSH_KEY"
+            exit 1
           fi
+
+          echo "Setting up SSH key..."
+          mkdir -p ~/.ssh
+          echo "$EC2_SSH_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -p "$EC2_SSH_PORT" -H "$EC2_HOST" >> ~/.ssh/known_hosts
+
+          echo "Deploying to EC2..."
+          ssh -p "$EC2_SSH_PORT" "$EC2_USER@$EC2_HOST" <<EOF
+          set -e
+          echo "✅ Connected to EC2"
+
+          if ! command -v docker >/dev/null 2>&1; then
+            echo "❌ Docker is not installed on EC2"
+            exit 1
+          fi
+
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin $ECR_REGISTRY
+          docker pull $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+          docker stop nonprofit-learning-backend || true
+          docker rm nonprofit-learning-backend || true
+
+          docker run -d \
+            --name nonprofit-learning-backend \
+            --restart unless-stopped \
+            -p 8000:8000 \
+            -e DATABASE_URL="$DATABASE_URL" \
+            -e CLERK_SECRET_KEY="$CLERK_SECRET_KEY" \
+            -e CLERK_PUBLISHABLE_KEY="$CLERK_PUBLISHABLE_KEY" \
+            -e CLERK_FRONTEND_API="$CLERK_FRONTEND_API" \
+            -e ENVIRONMENT="production" \
+            -e CORS_ORIGINS="$CORS_ORIGINS" \
+            $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+          echo "✅ EC2 deployment completed"
+          EOF
 
       - name: Run database migrations
         env:
@@ -233,6 +137,6 @@ jobs:
 
       - name: Deployment status
         run: |
-          echo "✅ Backend deployed to AWS App Runner"
-          echo "Service: ${{ env.APP_RUNNER_SERVICE }}"
+          echo "✅ Backend deployed to EC2"
+          echo "Host: ${{ secrets.EC2_HOST }}"
           echo "Region: ${{ env.AWS_REGION }}"
